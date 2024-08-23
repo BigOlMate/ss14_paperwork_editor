@@ -1,6 +1,7 @@
 const MAX_PAGE_CONTENT_LENGTH = 6000;
 
 import { HTMLifier } from "./htmlifier.mjs";
+import "./image_conv.mjs";
 import "./run_tests.mjs";
 
 const editor = document.getElementById("paperwork_editor");
