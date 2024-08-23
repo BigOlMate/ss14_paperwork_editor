@@ -6,11 +6,17 @@
 import { add_test_group } from "./test.mjs";
 import { ok, err, Result } from "./result.mjs";
 
-class Match {
-    constructor(matched, start, end, suppress) {
-        this.matched = matched;
+class Span {
+    constructor(start, end) {
         this.start = start;
         this.end = end;
+    }
+}
+
+class Match {
+    constructor(matched, span, suppress) {
+        this.matched = matched;
+        this.span = span;
         if (suppress == undefined) {
             suppress = false;
         }
@@ -18,16 +24,15 @@ class Match {
     }
 
     with_start(start) {
-        this.start = start;
+        this.span.start = start;
         return this;
     }
     with_end(end) {
-        this.end = end;
+        this.span.end = end;
         return this;
     }
-    with_span(start, end) {
-        this.start = start;
-        this.end = end;
+    with_span(span) {
+        this.span = span;
         return this;
     }
     with_matched(matched) {
@@ -78,7 +83,7 @@ function p_literal(literal) {
     return new Parser(function(text, i) {
         const check_chunk = text.slice(i, i + literal.length);
         if (check_chunk == literal) {
-            return ok(new Match(literal, i, i + literal.length));
+            return ok(new Match(literal, new Span(i, i + literal.length)));
         } else {
             return ok(null);
         }
@@ -91,7 +96,7 @@ function p_regex(regex) {
         if (match === null) {
             return ok(null);
         } else {
-            return ok(new Match(match[0], i, i + match[0].length));
+            return ok(new Match(match[0], new Span(i, i + match[0].length)));
         }
     })
 }
@@ -105,7 +110,7 @@ function p_preceded(parser_a, parser_b) {
         if (parser_a_result.value === null) {
             return ok(null);
         }
-        const parser_b_result = _as_parser(parser_b).parse(text, parser_a_result.value.end);
+        const parser_b_result = _as_parser(parser_b).parse(text, parser_a_result.value.span.end);
         if (parser_b_result.is_err()) {
             return parser_b_result;
         }
@@ -125,14 +130,14 @@ function p_succeeded(parser_a, parser_b) {
         if (parser_a_result.value === null) {
             return ok(null);
         }
-        const parser_b_result = _as_parser(parser_b).parse(text, parser_a_result.value.end);
+        const parser_b_result = _as_parser(parser_b).parse(text, parser_a_result.value.span.end);
         if (parser_b_result.is_err()) {
             return parser_b_result;
         }
         if (parser_b_result.value === null) {
             return ok(null);
         }
-        return ok(parser_a_result.value.with_end(parser_b_result.value.end));
+        return ok(parser_a_result.value.with_end(parser_b_result.value.span.end));
     })
 }
 
@@ -145,14 +150,14 @@ function p_delimited(parser_a, parser_b, parser_c) {
         if (parser_a_result.value === null) {
             return ok(null);
         }
-        const parser_b_result = _as_parser(parser_b).parse(text, parser_a_result.value.end);
+        const parser_b_result = _as_parser(parser_b).parse(text, parser_a_result.value.span.end);
         if (parser_b_result.is_err()) {
             return parser_b_result;
         }
         if (parser_b_result.value === null) {
             return ok(null);
         }
-        const parser_c_result = _as_parser(parser_c).parse(text, parser_b_result.value.end)
+        const parser_c_result = _as_parser(parser_c).parse(text, parser_b_result.value.span.end)
         if (parser_c_result.is_err()) {
             return parser_c_result;
         }
@@ -160,7 +165,7 @@ function p_delimited(parser_a, parser_b, parser_c) {
             return ok(null);
         }
         return ok(
-            parser_b_result.value.with_span(parser_a_result.value.start, parser_c_result.value.end)
+            parser_b_result.value.with_span(new Span(parser_a_result.value.span.start, parser_c_result.value.span.end))
         );
     })
 }
@@ -180,9 +185,9 @@ function p_all(...parsers) {
             if (!parser_result.value.suppressed) {
                 result.push(parser_result.value.matched);
             }
-            start = parser_result.value.end;
+            start = parser_result.value.span.end;
         }
-        return ok(new Match(result, i, start));
+        return ok(new Match(result, new Span(i, start)));
     })
 }
 
@@ -211,7 +216,7 @@ function p_optional(parser, default_value) {
             return parser_result;
         }
         if (parser_result.value === null) {
-            return ok(new Match(default_value, i, i));
+            return ok(new Match(default_value, new Span(i, i)));
         }
         return parser_result;
     })
@@ -230,7 +235,7 @@ function p_one_or_more(parser) {
                 break;
             }
             result.push(parser_result.value);
-            start = parser_result.value.end;
+            start = parser_result.value.span.end;
 
             if (start == text.length) {
                 break;
@@ -239,7 +244,7 @@ function p_one_or_more(parser) {
         if (result.length == 0) {
             return ok(null);
         } else {
-            return ok(new Match(result, i, start));
+            return ok(new Match(result, new Span(i, start)));
         }
     })
 }
@@ -258,7 +263,7 @@ function p_take_chars_while1(predicate) {
         if (result.length == 0) {
             return ok(null);
         } else {
-            return ok(new Match(result.join(''), i, start));
+            return ok(new Match(result.join(''), new Span(i, start)));
         }
     })
 }
@@ -270,7 +275,7 @@ function p_take_chars_while0(predicate) {
             result.push(text.charAt(start));
             start++;
         }
-        return ok(new Match(result.join(''), i, start));
+        return ok(new Match(result.join(''), new Span(i, start)));
     })
 }
 
@@ -283,7 +288,7 @@ function p_map(parser, func) {
         if (parser_result.value === null) {
             return ok(null);
         }
-        let result = func(parser_result.value.matched);
+        let result = func(parser_result.value.span, parser_result.value.matched);
         if (result instanceof Result) {
             if (result.is_err()) {
                 return result;
@@ -303,7 +308,9 @@ function p_recognize(parser) {
         if (parser_result.value === null) {
             return ok(null);
         }
-        return ok(new Match(text.slice(parser_result.value.start, parser_result.value.end), parser_result.value.start, parser_result.value.end));
+        return ok(new Match(
+            text.slice(parser_result.value.span.start, parser_result.value.span.end),
+            parser_result.value.span));
     })
 }
 
@@ -313,16 +320,16 @@ add_test_group("parser", {
             const result = parser.parse("hello world");
             t.assert(result.is_ok());
             t.assert_eq(result.value.matched, "hello");
-            t.assert_eq(result.value.start, 0);
-            t.assert_eq(result.value.end, 5);
+            t.assert_eq(result.value.span.start, 0);
+            t.assert_eq(result.value.span.end, 5);
     },
     literal_mid: (t) => {
         const parser = p_literal("world");
         const result = parser.parse("hello world", 6);
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched, "world");
-        t.assert_eq(result.value.start, 6);
-        t.assert_eq(result.value.end, 11);
+        t.assert_eq(result.value.span.start, 6);
+        t.assert_eq(result.value.span.end, 11);
     },
     regex: (t) => {
         const parser = p_regex(/^hello/);
@@ -330,9 +337,9 @@ add_test_group("parser", {
         const result = parser.parse(str);
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched, "hello");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 5);
-        t.assert_eq(str.slice(result.value.end), " world");
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 5);
+        t.assert_eq(str.slice(result.value.span.end), " world");
     },
 
     all: (t) => {
@@ -350,8 +357,8 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_ne(result.value, null);
         t.assert_eq(result.value.matched, "hello");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 5);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 5);
     },
 
     preceded: (t) => {
@@ -361,9 +368,9 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_ne(result.value, null);
         t.assert_eq(result.value.matched, "world");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 11);
-        t.assert_eq(str.slice(result.value.end), "");
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 11);
+        t.assert_eq(str.slice(result.value.span.end), "");
     },
     succeeded: (t) => {
         const parser = p_succeeded(p_literal("hello "), p_literal("world"));
@@ -372,9 +379,9 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_ne(result.value, null);
         t.assert_eq(result.value.matched, "hello ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 11);
-        t.assert_eq(str.slice(result.value.end), "");
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 11);
+        t.assert_eq(str.slice(result.value.span.end), "");
     },
     delimited: (t) => {
         const parser = p_delimited(p_literal("hello"), p_literal(" "), p_literal("world"));
@@ -383,9 +390,9 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_ne(result.value, null);
         t.assert_eq(result.value.matched, " ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 11);
-        t.assert_eq(str.slice(result.value.end), "");
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 11);
+        t.assert_eq(str.slice(result.value.span.end), "");
     },
     optional_none: (t) => {
         const parser = p_optional(p_literal("hello"));
@@ -393,8 +400,8 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_ne(result.value, null);
         t.assert_eq(result.value.matched, null);
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 0);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 0);
     },
     optional_some: (t) => {
             const parser = p_optional(p_literal("hello"));
@@ -402,8 +409,8 @@ add_test_group("parser", {
             t.assert(result.is_ok());
             t.assert_ne(result.value, null);
             t.assert_eq(result.value.matched, "hello");
-            t.assert_eq(result.value.start, 0);
-            t.assert_eq(result.value.end, 5);
+            t.assert_eq(result.value.span.start, 0);
+            t.assert_eq(result.value.span.end, 5);
     },
 
     one_or_more_more: (t) => {
@@ -413,8 +420,8 @@ add_test_group("parser", {
         t.assert_eq(result.value.matched.length, 2);
         t.assert_eq(result.value.matched[0].matched, "hello ");
         t.assert_eq(result.value.matched[1].matched, "hello ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 12);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 12);
     },
     one_or_more_one: (t) => {
         const parser = p_one_or_more(p_literal("hello "));
@@ -422,8 +429,8 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched.length, 1);
         t.assert_eq(result.value.matched[0].matched, "hello ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 6);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 6);
     },
     one_or_more_none: (t) => {
         const parser = p_one_or_more(p_literal("hello "));
@@ -438,8 +445,8 @@ add_test_group("parser", {
         t.assert_eq(result.value.matched.length, 2);
         t.assert_eq(result.value.matched[0].matched, "hello ");
         t.assert_eq(result.value.matched[1].matched, "hello ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 12);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 12);
     },
     zero_or_more_one: (t) => {
         const parser = p_zero_or_more(p_literal("hello "));
@@ -447,40 +454,40 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched.length, 1);
         t.assert_eq(result.value.matched[0].matched, "hello ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 6);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 6);
     },
     zero_or_more_none: (t) => {
         const parser = p_zero_or_more(p_literal("hello "));
         const result = parser.parse("world");
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched.length, 0);
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 0);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 0);
     },
     take_chars_while0: (t) => {
         const parser = p_take_chars_while0((c) => c != " ");
         const result = parser.parse("hello world");
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched, "hello");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 5);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 5);
     },
     take_chars_while1: (t) => {
         const parser = p_take_chars_while1((c) => c != " ");
         const result = parser.parse("hello world");
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched, "hello");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 5);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 5);
     },
     map: (t) => {
-        const parser = p_map(p_literal("hello"), (s) => s.toUpperCase());
+        const parser = p_map(p_literal("hello"), (span, s) => s.toUpperCase());
         const result = parser.parse("hello world");
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched, "HELLO");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 5);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 5);
     },
     recognize: (t) => {
         const parser = p_recognize(p_delimited(p_literal("hello"), p_literal(" "), p_literal("world")));
@@ -489,15 +496,16 @@ add_test_group("parser", {
         t.assert(result.is_ok());
         t.assert_ne(result.value, null);
         t.assert_eq(result.value.matched, "hello world");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 11);
-        t.assert_eq(str.slice(result.value.end), "");
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 11);
+        t.assert_eq(str.slice(result.value.span.end), "");
     },
 });
 
 
 export {
     Parser,
+    Span,
     p_literal as literal,
     p_regex as regex,
     p_all as all,

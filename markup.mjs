@@ -4,19 +4,22 @@ import { add_test_group } from "./test.mjs";
 import * as parser from "./parser.mjs";
 
 class Node {
-    constructor(type, value, param, attrs) {
+    constructor(span, type, value, param, attrs, was_self_closed) {
+        this.span = span;
         this.type = type;
         this.value = value;
         this.param = param;
         this.attrs = attrs || {};
+        this.was_self_closed = was_self_closed;
     }
 }
-const text_node = (value) => new Node("text", value);
-const closing_node = (name) => new Node("closing", name);
-const open_node = (name, param, attrs) => new Node("open", name, param, attrs);
+const text_node = (span, value) => new Node(span, "text", value);
+const closing_node = (span, name) => new Node(span, "closing", name);
+const open_node = (span, name, param, attrs, was_self_closed) => new Node(span, "open", name, param, attrs, was_self_closed);
 
 class Parameter {
-    constructor(type, value) {
+    constructor(span, type, value) {
+        this.span = span;
         this.type = type;
         this.value = value;
     }
@@ -25,12 +28,13 @@ class Parameter {
         return "" + this.value;
     }
 }
-const text_param = (value) => new Parameter("text", value);
-const color_param = (value) => new Parameter("color", value);
-const number_param = (value) => new Parameter("number", value);
+const text_param = (span, value) => new Parameter(span, "text", value);
+const color_param = (span, value) => new Parameter(span, "color", value);
+const number_param = (span, value) => new Parameter(span, "number", value);
 
 class KeyValuePair {
-    constructor(key, value) {
+    constructor(span, key, value) {
+        this.span = span;
         this.key = key;
         this.value = value;
     }
@@ -48,8 +52,8 @@ const p_escape_sequence = parser.recognize(parser.all(
 
 const p_text = p_escape_sequence.or(
     parser.take_chars_while1((c) => c != '[' && c != '\\')
-).map((c) => {
-    return [text_node(c)];
+).map((span, text) => {
+    return [text_node(span, text)];
 });
 
 const p_identifier = parser.recognize(
@@ -71,7 +75,7 @@ const p_color_name = parser.recognize(
         parser.take_chars_while1((c) => /^[a-zA-Z#]/.test(c)),
         parser.take_chars_while0((c) => /^[a-zA-Z0-9#]/.test(c))
     )
-).map((color_name) => {
+).map((span, color_name) => {
     color_name = color_name.toLowerCase();
     if (!is_valid_color_name(color_name)) {
         color_name = 'black';
@@ -80,7 +84,7 @@ const p_color_name = parser.recognize(
 });
 
 const p_param_color = p_hex_color.or(p_color_name).map(color_param);
-const p_param_number = parser.regex(/^[0-9]+/).map(parseInt).map(number_param);
+const p_param_number = parser.regex(/^[0-9]+/).map((span, sint) => parseInt(sint)).map(number_param);
 
 const p_whitespace0 = parser.regex(/^[ \t\n\r]*/);
 
@@ -100,7 +104,7 @@ const p_kv_pair = parser.delimited(
         parser.optional(p_param)
     ),
     p_whitespace0
-).map((kv) => new KeyValuePair(kv[0], kv[1]));
+).map((span, kv) => new KeyValuePair(span, kv[0], kv[1]));
 
 
 const p_closing_tag = parser.delimited(
@@ -111,25 +115,27 @@ const p_closing_tag = parser.delimited(
         p_whitespace0
     ),
     ']'
-).map((text) => [closing_node(text)]);
+).map((span, text) => [closing_node(span, text)]);
 
 const p_open_tag = parser.all(
     p_kv_pair,
     parser.zero_or_more(p_kv_pair),
     parser.any(
-        parser.literal('/]').map((_) => true),
-        parser.literal(']').map((_) => false)
+        parser.literal('/]').map((span, _) => true),
+        parser.literal(']').map((span, _) => false)
     )
-).map((parsed) => {
+).map((span, parsed) => {
     const nodes = [
         open_node(
+            span,
             parsed[0].key,
             parsed[0].value,
-            parsed[1]
+            parsed[1],
+            parsed[2] // self closed
         )
     ];
     if (parsed[2]) {
-        nodes.push(closing_node(parsed[0].name))
+        nodes.push(closing_node(span, parsed[0].key))
     }
     return nodes;
 });
@@ -145,7 +151,7 @@ const p_tag = parser.preceded(
 const p_markup = parser.zero_or_more(parser.any(
     p_text,
     p_tag
-)).map((node_lists) => {
+)).map((span, node_lists) => {
     const nodes = [];
     for (let node_list of node_lists) {
         nodes.push(...node_list.matched);
@@ -153,7 +159,7 @@ const p_markup = parser.zero_or_more(parser.any(
     return nodes;
 });
 
-export { p_markup };
+export { p_markup, is_valid_color_name };
 
 add_test_group("markup", {
     text: (t) => {
@@ -161,16 +167,16 @@ add_test_group("markup", {
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched[0].type, "text");
         t.assert_eq(result.value.matched[0].value, "Hello, ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 7);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 7);
     },
     text_2: (t) => {
         const result = p_text.parse("Hello, ");
         t.assert(result.is_ok());
         t.assert_eq(result.value.matched[0].type, "text");
         t.assert_eq(result.value.matched[0].value, "Hello, ");
-        t.assert_eq(result.value.start, 0);
-        t.assert_eq(result.value.end, 7);
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 7);
     },
     identifier_valid: (t) => {
         const result = p_identifier.parse("testidentifier");
@@ -266,6 +272,8 @@ add_test_group("markup", {
     kv_pair: (t) => {
         const result = p_kv_pair.parse('id="test"');
         t.assert(result.is_ok());
+        t.assert_eq(result.value.span.start, 0);
+        t.assert_eq(result.value.span.end, 9);
         t.assert_eq(result.value.matched.key, "id");
         t.assert_eq(result.value.matched.value.type, "text");
         t.assert_eq(result.value.matched.value.value, "test");
