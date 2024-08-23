@@ -1,4 +1,5 @@
 // takes the output from the markup parser and turns it into HTML
+import {p_markup} from "./markup.mjs";
 
 class Node {
     constructor(type, value) {
@@ -65,34 +66,33 @@ class Node {
 export class HTMLifier {
     constructor() {
         this.stack = [new Node("root", null)];
-        this.phantom_tags = [];
     }
 
-    add_text(text) {
+    #add_text(text) {
         this.stack[this.stack.length-1].inner.push(text);
     }
-    add_opening(name, param) {
+    #add_opening(name, param) {
         if (param !== null) {
             param = param.to_str();
         }
         this.stack.push(new Node(name, param));
     }
 
-    _close_top_tag() {
+    #_close_top_tag() {
         const t_node = this.stack.pop();
         const head = this.stack[this.stack.length-1];
         console.log(head, ".add_child", t_node);
         this.stack[this.stack.length-1].inner.push(t_node);
     }
 
-    add_closing(name) {
+    #add_closing(name) {
         if (this.stack.length === 1) {
             // closing with none open?
             return;
         }
         if (this.stack[this.stack.length-1].type === name) {
             // simple case, properly closing tag
-            this._close_top_tag();
+            this.#_close_top_tag();
             return;
         }
         // messy case, closes some other tag
@@ -122,10 +122,10 @@ export class HTMLifier {
                 let tag = this.stack[this.stack.length-1];
                 temp_closed_tags.push([tag.type, tag.param]);
             }
-            this._close_top_tag();
+            this.#_close_top_tag();
         }
         // close the intended tag
-        this._close_top_tag();
+        this.#_close_top_tag();
 
         temp_closed_tags = temp_closed_tags.reverse()
         // re-add all the tags we closed
@@ -134,14 +134,32 @@ export class HTMLifier {
         }
     }
 
-    fix() {
+    #fix() {
         while (this.stack.length > 1) {
-            this._close_top_tag();
+            this.#_close_top_tag();
         }
     }
 
+    #set_nodes(nodes) {
+        this.stack = [new Node("root", null)];
+        for (let node of nodes) {
+            if (node.type == "text") {
+                this.#add_text(node.value);
+            } else if (node.type == "open") {
+                this.#add_opening(node.value, node.param);
+            } else if (node.type == "closing") {
+                this.#add_closing(node.value);
+            }
+        }
+    }
+
+    set_markup(markup) {
+        const parsed = p_markup.parse(markup);
+        this.#set_nodes(parsed.value.matched);
+    }
+
     to_html() {
-        this.fix();
+        this.#fix();
         return this.stack[0].to_html();
     }
 }

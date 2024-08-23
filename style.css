@@ -97,7 +97,6 @@
 }
 
 .dep-colors * {
-	padding: 5px;
 	font-weight: bold;
 }
 
@@ -107,6 +106,26 @@ table {
 
 tr {
 	border-top: 3px solid black;
+	padding: 2px;
+}
+
+td {
+	padding: 0px;
+	padding-left: 5px;
+	padding-right: 5px;
+}
+
+td:nth-child(1) {
+	border-right: 1px solid black;
+}
+
+th {
+	padding-left: 5px;
+	padding-right: 5px;
+}
+
+th:nth-child(1) {
+	border-right: 1px solid black;
 }
 
 .noto-sans {

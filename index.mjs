@@ -1,27 +1,17 @@
 const MAX_PAGE_CONTENT_LENGTH = 6000;
 
-import {p_markup} from "./markup.mjs";
 import { HTMLifier } from "./htmlifier.mjs";
 import "./run_tests.mjs";
 
 const editor = document.getElementById("paperwork_editor");
 const viewer = document.getElementById("paperwork_viewer");
+const htmlifier = new HTMLifier();
 console.log("editor", editor);
 
 function set_html() {
-    let parsed = p_markup.parse(editor.value);
-    let html = new HTMLifier();
-    for (let node of parsed.value.matched) {
-        if (node.type == "text") {
-            html.add_text(node.value);
-        } else if (node.type == "open") {
-            html.add_opening(node.value, node.param);
-        } else if (node.type == "closing") {
-            html.add_closing(node.value);
-        }
-    }
+    htmlifier.set_markup(editor.value);
     viewer.innerHTML = "";
-    viewer.appendChild(html.to_html());
+    viewer.appendChild(htmlifier.to_html());
 }
 
 editor.addEventListener('input', function(ev) {
